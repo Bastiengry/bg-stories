@@ -25,6 +25,12 @@
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6ed9dee2-4c41-4f7d-91fb-f5ff8289e49e"
+      }
+    },
+    "owner": "bg_hr68"
   }
 }

@@ -1,6 +1,10 @@
 node_modules/
 .expo/
 dist/
+android/app/build/
+android/build/
+android/.cxx/
+android/app/.cxx/
 web-build/
 *.log
 *.orig.*
