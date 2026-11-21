@@ -25,12 +25,22 @@ npx expo start
 
 ## Configuration gratuite
 
-1. Crée un compte gratuit sur [console.mistral.ai](https://console.mistral.ai) et crée une clé API (le plan gratuit « Experiment » convient).
-2. Lance l'app, colle la clé dans le champ prévu → elle est enregistrée en sécurité sur le téléphone.
+L'app supporte plusieurs fournisseurs — sélectionne le tien dans l'app (par défaut : **Google Gemini**) :
+
+| Fournisseur | Clé | Modèle | Gratuit ? |
+|---|---|---|---|
+| **Google Gemini** (recommandé, par défaut) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `gemini-2.0-flash` | ✅ Sans carte bancaire |
+| **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | `llama-3.3-70b-versatile` | ✅ Sans carte bancaire |
+| **Mistral** | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) | `mistral-small-latest` | ❌ Facturation requise depuis nov. 2026 |
+
+1. Crée une clé gratuite sur Google AI Studio (compte Google suffit, aucune carte).
+2. Lance l'app → fournisseur Google Gemini → colle la clé → **Enregistrer la clé**. Elle est enregistrée en sécurité sur le téléphone.
+
+> Note : le plan « Experiment » gratuit de Mistral ne permet plus de créer des clés API depuis novembre 2026 ; l'option Mistral reste disponible pour les comptes avec facturation activée.
 
 | Composant | Service | Coût |
 |---|---|---|
-| Génération du texte | API Mistral (`mistral-small-latest`) | Plan gratuit disponible |
+| Génération du texte | API au choix (Gemini par défaut) | Gratuit |
 | Lecture vocale | `expo-speech` (moteur TTS du téléphone) | Gratuit |
 
 ## Structure
@@ -38,7 +48,7 @@ npx expo start
 ```
 App.tsx                  → Interface principale (choix langue, genre, thème, lecture)
 src/lib/config.ts        → Langues, genres, limites de longueur
-src/lib/mistral.ts       → Appel API Mistral, prompt, parsing, garde-fous de longueur
+src/lib/generate.ts      → Appels API multi-fournisseurs (Gemini / Groq / Mistral), prompt, parsing, garde-fous
 src/lib/speech.ts        → Découpage du texte en morceaux + contrôleur de lecture vocabulaire
 src/lib/storage.ts       → Stockage sécurisé de la clé API
 ```

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,8 +12,15 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 
-import { GENRES, Genre, LANGS, Lang, Story } from "./src/lib/config";
-import { StoryError, generateStory, storyDurationMinutes } from "./src/lib/mistral";
+import { GENRES, Genre, LANGS, Lang } from "./src/lib/config";
+import {
+  PROVIDERS,
+  ProviderId,
+  Story,
+  StoryError,
+  generateStory,
+  storyDurationMinutes,
+} from "./src/lib/generate";
 import { PlaybackState, SpeechController } from "./src/lib/speech";
 import { clearApiKey, getApiKey, saveApiKey } from "./src/lib/storage";
 
@@ -24,13 +30,15 @@ const LABELS = {
   fr: {
     headerTitle: "BG Stories",
     headerSubtitle: "Petites histoires, grandes émotions",
-    apiTitle: "Ta clé API Mistral",
-    apiHint:
-      "Crée une clé gratuite sur console.mistral.ai, puis colle-la ici. Elle reste stockée en sécurité sur ton téléphone.",
-    apiPlaceholder: "Colle ta clé API Mistral ici…",
+    providerTitle: "Fournisseur IA",
+    free: "Gratuit",
+    paid: "Payant",
+    recommended: "Recommandé",
+    apiHint: "Colle ta clé ci-dessous. Elle reste stockée en sécurité sur ton téléphone.",
+    apiPlaceholder: "Colle ta clé API ici…",
     apiSave: "Enregistrer la clé",
-    apiSaved: "Clé enregistrée ✓",
     apiChange: "Changer la clé",
+    getKey: "Obtenir une clé",
     langTitle: "Langue",
     genreTitle: "Genre",
     topicTitle: "Thème (optionnel)",
@@ -45,17 +53,22 @@ const LABELS = {
     readingTime: "~{min} min de lecture",
     another: "🔄  Nouvelle histoire",
     errorTitle: "Oups",
+    noKey: "Enregistre d'abord une clé API pour ce fournisseur.",
+    connectionError: "Connexion impossible. Vérifie ta connexion internet.",
+    unexpectedError: "Une erreur inattendue est survenue. Réessaie.",
   },
   en: {
     headerTitle: "BG Stories",
     headerSubtitle: "Short stories, big emotions",
-    apiTitle: "Your Mistral API key",
-    apiHint:
-      "Create a free key at console.mistral.ai and paste it here. It stays safely stored on your phone.",
-    apiPlaceholder: "Paste your Mistral API key here…",
+    providerTitle: "AI provider",
+    free: "Free",
+    paid: "Paid",
+    recommended: "Recommended",
+    apiHint: "Paste your key below. It stays safely stored on your phone.",
+    apiPlaceholder: "Paste your API key here…",
     apiSave: "Save key",
-    apiSaved: "Key saved ✓",
     apiChange: "Change key",
+    getKey: "Get a key",
     langTitle: "Language",
     genreTitle: "Genre",
     topicTitle: "Topic (optional)",
@@ -70,13 +83,22 @@ const LABELS = {
     readingTime: "~{min} min read",
     another: "🔄  New story",
     errorTitle: "Oops",
+    noKey: "Save an API key for this provider first.",
+    connectionError: "Connection failed. Check your internet connection.",
+    unexpectedError: "An unexpected error occurred. Try again.",
   },
 } as const;
 
+const EMPTY_KEYS: Record<ProviderId, string | null> = {
+  google: null,
+  groq: null,
+  mistral: null,
+};
+
 export default function App() {
-  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ProviderId>("google");
+  const [apiKeys, setApiKeys] = useState<Record<ProviderId, string | null>>(EMPTY_KEYS);
   const [apiKeyInput, setApiKeyInput] = useState("");
-  const [hasStoredKey, setHasStoredKey] = useState(false);
   const [lang, setLang] = useState<Lang>("fr");
   const [genre, setGenre] = useState<Genre>("conte");
   const [topic, setTopic] = useState("");
@@ -93,20 +115,22 @@ export default function App() {
   const speech = speechRef.current;
 
   useEffect(() => {
-    getApiKey().then((stored) => {
-      if (stored) {
-        setApiKey(stored);
-        setHasStoredKey(true);
+    Promise.all(PROVIDERS.map(async (p) => [p.id, await getApiKey(p.id)] as const)).then(
+      (entries) => {
+        setApiKeys(Object.fromEntries(entries) as Record<ProviderId, string | null>);
       }
-    });
+    );
     return () => speech.stop();
   }, [speech]);
 
   const t = LABELS[lang];
+  const providerDef = PROVIDERS.find((p) => p.id === provider)!;
+  const apiKey = apiKeys[provider];
+  const hasStoredKey = Boolean(apiKey);
 
   const handleGenerate = useCallback(async () => {
-    if (!apiKey) {
-      setError(lang === "fr" ? "Ajoute d'abord ta clé API Mistral." : "Add your Mistral API key first.");
+    if (!apiKeys[provider]) {
+      setError(t.noKey);
       return;
     }
     setLoading(true);
@@ -116,22 +140,25 @@ export default function App() {
     try {
       const genreEntry = GENRES.find((g) => g.id === genre)!;
       const genreLabel = lang === "fr" ? genreEntry.labelFr : genreEntry.labelEn;
-      const generated = await generateStory({ apiKey, lang, genre, genreLabel, topic });
+      const generated = await generateStory({
+        provider,
+        apiKey: apiKeys[provider]!,
+        lang,
+        genre,
+        genreLabel,
+        topic,
+      });
       setStory(generated);
     } catch (e) {
       if (e instanceof StoryError) {
         setError(e.message);
       } else {
-        setError(
-          lang === "fr"
-            ? "Une erreur inattendue est survenue. Réessaie."
-            : "An unexpected error occurred. Try again."
-        );
+        setError(t.unexpectedError);
       }
     } finally {
       setLoading(false);
     }
-  }, [apiKey, genre, lang, speech, topic]);
+  }, [apiKeys, genre, lang, provider, speech, t, topic]);
 
   const handleListen = useCallback(() => {
     if (!story) return;
@@ -153,12 +180,11 @@ export default function App() {
   const handleSaveKey = useCallback(async () => {
     const trimmed = apiKeyInput.trim();
     if (!trimmed) return;
-    await saveApiKey(trimmed);
-    setApiKey(trimmed);
-    setHasStoredKey(true);
+    await saveApiKey(provider, trimmed);
+    setApiKeys((prev) => ({ ...prev, [provider]: trimmed }));
     setApiKeyInput("");
     setError(null);
-  }, [apiKeyInput]);
+  }, [apiKeyInput, provider]);
 
   const handleReset = useCallback(() => {
     speech.stop();
@@ -171,20 +197,55 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>{t.headerTitle}</Text>
-            <Text style={styles.headerSubtitle}>{t.headerSubtitle}</Text>
-          </View>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>{t.headerTitle}</Text>
+          <Text style={styles.headerSubtitle}>{t.headerSubtitle}</Text>
+        </View>
 
+        <View style={styles.row}>
+          <Text style={styles.sectionTitle}>{t.providerTitle}</Text>
+        </View>
+        <View style={styles.chipWrap}>
+          {PROVIDERS.map((p) => {
+            const isSelected = provider === p.id;
+            return (
+              <Pressable
+                key={p.id}
+                onPress={() => {
+                  setProvider(p.id);
+                  setApiKeyInput("");
+                }}
+                style={[styles.chip, styles.providerChip, isSelected && styles.chipSelected]}
+              >
+                <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                  {`${p.emoji} ${p.label}`}
+                </Text>
+                <Text style={styles.providerBadge}>
+                  {p.free ? `· ${t.free}` : `· ${t.paid}`}
+                  {p.recommended ? ` (${t.recommended})` : ""}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>
+            {providerDef[lang].label}
+            {hasStoredKey ? " ✓" : ""}
+          </Text>
+          <Text style={styles.hint}>{providerDef[lang].hint}</Text>
           {!hasStoredKey && (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>{t.apiTitle}</Text>
-              <Text style={styles.hint}>{t.apiHint}</Text>
+            <Text
+              style={styles.link}
+              onPress={() => Linking.openURL(providerDef.keyUrl)}
+            >
+              {t.getKey}
+            </Text>
+          )}
+          {!hasStoredKey && (
+            <>
               <TextInput
                 style={styles.input}
                 value={apiKeyInput}
@@ -194,137 +255,138 @@ export default function App() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 secureTextEntry
-                multiline={false}
               />
               <Pressable style={styles.primaryButton} onPress={handleSaveKey}>
                 <Text style={styles.primaryButtonText}>{t.apiSave}</Text>
               </Pressable>
-            </View>
-          )}
-
-          {hasStoredKey && (
-            <Pressable onPress={() => setHasStoredKey(false)}>
-              <Text style={styles.linkSmall}>
-                {apiKeyInput ? t.apiSave : t.apiChange}
-              </Text>
-            </Pressable>
-          )}
-
-          {!hasStoredKey ? null : (
-            <>
-              <View style={styles.row}>
-                <Text style={styles.sectionTitle}>{t.langTitle}</Text>
-              </View>
-              <View style={styles.chipRow}>
-                {LANGS.map((l) => (
-                  <Chip
-                    key={l.id}
-                    selected={lang === l.id}
-                    label={`${l.flag} ${l.label}`}
-                    onPress={() => setLang(l.id)}
-                  />
-                ))}
-              </View>
-
-              <View style={styles.row}>
-                <Text style={styles.sectionTitle}>{t.genreTitle}</Text>
-              </View>
-              <View style={styles.chipWrap}>
-                {GENRES.map((g) => (
-                  <Chip
-                    key={g.id}
-                    selected={genre === g.id}
-                    label={`${g.emoji} ${lang === "fr" ? g.labelFr : g.labelEn}`}
-                    onPress={() => setGenre(g.id)}
-                  />
-                ))}
-              </View>
-
-              <View style={styles.row}>
-                <Text style={styles.sectionTitle}>{t.topicTitle}</Text>
-              </View>
-              <TextInput
-                style={styles.input}
-                value={topic}
-                onChangeText={setTopic}
-                placeholder={t.topicPlaceholder}
-                placeholderTextColor="#6b6b80"
-              />
-
-              <Pressable
-                style={[styles.primaryButton, loading && styles.disabled]}
-                onPress={handleGenerate}
-                disabled={loading}
-              >
-                {loading ? (
-                  <View style={styles.loadingRow}>
-                    <ActivityIndicator color="#fff" />
-                    <Text style={styles.primaryButtonText}>{t.generating}</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.primaryButtonText}>
-                    {story ? t.another : t.generate}
-                  </Text>
-                )}
-              </Pressable>
             </>
           )}
-
-          {error && (
-            <View style={styles.errorCard}>
-              <Text style={styles.errorTitle}>{t.errorTitle}</Text>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
+          {hasStoredKey && (
+            <Pressable
+              onPress={() => {
+                speech.stop();
+                setApiKeys((prev) => ({ ...prev, [provider]: null }));
+              }}
+            >
+              <Text style={styles.linkSmall}>{t.apiChange}</Text>
+            </Pressable>
           )}
+        </View>
 
-          {story && (
-            <View style={styles.storyCard}>
-              <Text style={styles.storyTitle}>{story.title}</Text>
-              <Text style={styles.readingTime}>
-                {t.readingTime.replace("{min}", Math.max(1, Math.round(readingTime)).toString())}
-              </Text>
-
-              {playback === "stopped" ? (
-                <Pressable style={styles.primaryButton} onPress={handleListen}>
-                  <Text style={styles.primaryButtonText}>{t.listen}</Text>
-                </Pressable>
-              ) : (
-                <View style={styles.playbackRow}>
-                  <Pressable style={styles.secondaryButton} onPress={handleListen}>
-                    <Text style={styles.secondaryButtonText}>
-                      {playback === "paused" ? t.resume : t.pause}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.secondaryButton}
-                    onPress={() => speech.stop()}
-                  >
-                    <Text style={styles.secondaryButtonText}>{t.stop}</Text>
-                  </Pressable>
-                </View>
-              )}
-
-              <View style={styles.speedRow}>
-                <Text style={styles.speedLabel}>{t.speed}</Text>
-                {RATE_OPTIONS.map((r) => (
-                  <Chip
-                    key={r}
-                    selected={rate === r}
-                    label={`${r}×`}
-                    onPress={() => handleRateChange(r)}
-                  />
-                ))}
-              </View>
-
-              {story.text.split(/\n+/).map((paragraph, i) => (
-                <Text key={i} style={styles.paragraph}>
-                  {paragraph.trim()}
-                </Text>
+        {!hasStoredKey ? null : (
+          <>
+            <View style={styles.row}>
+              <Text style={styles.sectionTitle}>{t.langTitle}</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {LANGS.map((l) => (
+                <Chip
+                  key={l.id}
+                  selected={lang === l.id}
+                  label={`${l.flag} ${l.label}`}
+                  onPress={() => setLang(l.id)}
+                />
               ))}
             </View>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+
+            <View style={styles.row}>
+              <Text style={styles.sectionTitle}>{t.genreTitle}</Text>
+            </View>
+            <View style={styles.chipWrap}>
+              {GENRES.map((g) => (
+                <Chip
+                  key={g.id}
+                  selected={genre === g.id}
+                  label={`${g.emoji} ${lang === "fr" ? g.labelFr : g.labelEn}`}
+                  onPress={() => setGenre(g.id)}
+                />
+              ))}
+            </View>
+
+            <View style={styles.row}>
+              <Text style={styles.sectionTitle}>{t.topicTitle}</Text>
+            </View>
+            <TextInput
+              style={styles.input}
+              value={topic}
+              onChangeText={setTopic}
+              placeholder={t.topicPlaceholder}
+              placeholderTextColor="#6b6b80"
+            />
+
+            <Pressable
+              style={[styles.primaryButton, loading && styles.disabled]}
+              onPress={handleGenerate}
+              disabled={loading}
+            >
+              {loading ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color="#fff" />
+                  <Text style={styles.primaryButtonText}>{t.generating}</Text>
+                </View>
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  {story ? t.another : t.generate}
+                </Text>
+              )}
+            </Pressable>
+          </>
+        )}
+
+        {error && (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>{t.errorTitle}</Text>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {story && (
+          <View style={styles.storyCard}>
+            <Text style={styles.storyTitle}>{story.title}</Text>
+            <Text style={styles.readingTime}>
+              {t.readingTime.replace("{min}", Math.max(1, Math.round(readingTime)).toString())}
+            </Text>
+
+            {playback === "stopped" ? (
+              <Pressable style={styles.primaryButton} onPress={handleListen}>
+                <Text style={styles.primaryButtonText}>{t.listen}</Text>
+              </Pressable>
+            ) : (
+              <View style={styles.playbackRow}>
+                <Pressable style={styles.secondaryButton} onPress={handleListen}>
+                  <Text style={styles.secondaryButtonText}>
+                    {playback === "paused" ? t.resume : t.pause}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => speech.stop()}
+                >
+                  <Text style={styles.secondaryButtonText}>{t.stop}</Text>
+                </Pressable>
+              </View>
+            )}
+
+            <View style={styles.speedRow}>
+              <Text style={styles.speedLabel}>{t.speed}</Text>
+              {RATE_OPTIONS.map((r) => (
+                <Chip
+                  key={r}
+                  selected={rate === r}
+                  label={`${r}×`}
+                  onPress={() => handleRateChange(r)}
+                />
+              ))}
+            </View>
+
+            {story.text.split(/\n+/).map((paragraph, i) => (
+              <Text key={i} style={styles.paragraph}>
+                {paragraph.trim()}
+              </Text>
+            ))}
+          </View>
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -344,7 +406,6 @@ function Chip(props: { selected: boolean; label: string; onPress: () => void }) 
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#101018" },
-  container: { flex: 1 },
   scroll: { padding: 20, paddingBottom: 48, gap: 14 },
   header: { marginTop: 8, marginBottom: 8, alignItems: "center" },
   headerTitle: { color: "#fff", fontSize: 30, fontWeight: "800" },
@@ -369,6 +430,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     backgroundColor: "#1b1b28",
   },
+  providerChip: { alignItems: "center" },
+  providerBadge: { color: "#7c8cff", fontSize: 11, marginTop: 2 },
   chipSelected: { borderColor: "#7c5cff", backgroundColor: "#2a2350" },
   chipText: { color: "#c9c9dd", fontSize: 14 },
   chipTextSelected: { color: "#fff", fontWeight: "700" },
@@ -391,6 +454,7 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   disabled: { opacity: 0.6 },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  link: { color: "#7c5cff", fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
   linkSmall: { color: "#7c5cff", textAlign: "right", fontSize: 13 },
   errorCard: {
     backgroundColor: "#3a1f2b",
