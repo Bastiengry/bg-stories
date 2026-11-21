@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "BG Stories",
+    "slug": "bg-stories",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "bgstories",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#101018"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bastiengry.bgstories",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Detection de la voix du lecteur pour cette application de lecture d'histoires.",
+        "NSMicrophoneUsageDescription": "Detection de la voix du lecteur pour cette application de lecture d'histoires."
+      }
+    },
+    "android": {
+      "package": "com.bastiengry.bgstories",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

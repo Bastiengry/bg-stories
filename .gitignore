@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+*.orig.*
+.DS_Store
+*.pem
+*.keystore
+*.jks
+.env
+.env.local
