@@ -51,11 +51,12 @@ export const PROVIDERS: ProviderDef[] = [
 ];
 
 interface ApiConfig {
-  url: string;
-  model: string;
+  urlForModel: (model: string) => string;
+  models: string[];
   headers: (key: string) => Record<string, string>;
   extract: (data: unknown) => { text?: string; errorMessage?: string };
   invalidKeyStatuses: number[];
+  modelUnavailable: (status: number, data: unknown) => boolean;
 }
 
 const SYSTEM_PROMPTS: Record<Lang, (genreLabel: string, topic: string) => string> = {
@@ -98,10 +99,22 @@ const nextUserMessage = (lang: Lang) =>
     ? "Génère l'histoire maintenant, respecte strictement le format demandé."
     : "Generate the story now, strictly follow the requested format.";
 
+const modelUnavailable = (status: number, data: any): boolean => {
+  if (status === 404) return true;
+  const message = String(data?.error?.message ?? data?.message ?? "").toLowerCase();
+  return (
+    status === 400 &&
+    (message.includes("not found") ||
+      message.includes("no longer available") ||
+      message.includes("deprecat"))
+  );
+};
+
 const APIS: Record<ProviderId, ApiConfig> = {
   google: {
-    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-    model: "gemini-2.0-flash",
+    urlForModel: (model) =>
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    models: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
     headers: (key) => ({ "Content-Type": "application/json", "x-goog-api-key": key }),
     extract: (data: any) => {
       const err = data?.error?.message;
@@ -112,10 +125,11 @@ const APIS: Record<ProviderId, ApiConfig> = {
       return { text };
     },
     invalidKeyStatuses: [400, 401, 403],
+    modelUnavailable,
   },
   groq: {
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    model: "llama-3.3-70b-versatile",
+    urlForModel: () => "https://api.groq.com/openai/v1/chat/completions",
+    models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
     headers: (key) => ({ "Content-Type": "application/json", Authorization: `Bearer ${key}` }),
     extract: (data: any) => {
       const err = data?.error?.message;
@@ -123,10 +137,11 @@ const APIS: Record<ProviderId, ApiConfig> = {
       return { text: data?.choices?.[0]?.message?.content };
     },
     invalidKeyStatuses: [401, 403],
+    modelUnavailable,
   },
   mistral: {
-    url: "https://api.mistral.ai/v1/chat/completions",
-    model: "mistral-small-latest",
+    urlForModel: () => "https://api.mistral.ai/v1/chat/completions",
+    models: ["mistral-small-latest"],
     headers: (key) => ({ "Content-Type": "application/json", Authorization: `Bearer ${key}` }),
     extract: (data: any) => {
       const err = data?.message || (typeof data === "string" ? data : undefined);
@@ -134,6 +149,7 @@ const APIS: Record<ProviderId, ApiConfig> = {
       return { text: data?.choices?.[0]?.message?.content };
     },
     invalidKeyStatuses: [401, 403],
+    modelUnavailable,
   },
 };
 
@@ -170,8 +186,12 @@ export interface Story {
   text: string;
 }
 
-function bodyForProvider(provider: ProviderId, systemPrompt: string, userMessage: string): string {
-  const api = APIS[provider];
+function bodyForProvider(
+  provider: ProviderId,
+  model: string,
+  systemPrompt: string,
+  userMessage: string
+): string {
   if (provider === "google") {
     return JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -179,11 +199,11 @@ function bodyForProvider(provider: ProviderId, systemPrompt: string, userMessage
       generationConfig: { temperature: 0.9, maxOutputTokens: 4096 },
     });
   }
-  if (provider === "mistral") {
+  if (provider === "groq") {
     return JSON.stringify({
-      model: api.model,
+      model,
       temperature: 0.9,
-      max_tokens: 1400,
+      max_completion_tokens: 4096,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -191,7 +211,7 @@ function bodyForProvider(provider: ProviderId, systemPrompt: string, userMessage
     });
   }
   return JSON.stringify({
-    model: api.model,
+    model,
     temperature: 0.9,
     max_tokens: 1400,
     messages: [
@@ -214,39 +234,49 @@ export async function generateStory(params: {
   const systemPrompt = SYSTEM_PROMPTS[lang](genreLabel, topic);
   const userMessage = nextUserMessage(lang);
 
-  let response: Response;
-  try {
-    response = await fetch(api.url, {
-      method: "POST",
-      headers: api.headers(apiKey),
-      body: bodyForProvider(provider, systemPrompt, userMessage),
-    });
-  } catch {
-    throw new StoryError("Connexion impossible. Vérifie ta connexion internet.");
-  }
-
-  if (api.invalidKeyStatuses.includes(response.status)) {
-    throw new StoryError("Clé API invalide ou refusée. Vérifie ta clé dans les réglages.");
-  }
-  if (response.status === 429) {
-    throw new StoryError(
-      "Limite d'utilisation atteinte. Attends un instant avant de réessayer."
-    );
-  }
-
+  let response: Response | null = null;
   let data: any = null;
-  try {
-    data = await response.json();
-  } catch {
-    throw new StoryError(`Réponse illisible du service (code ${response.status}).`);
-  }
 
-  if (!response.ok) {
+  for (const model of api.models) {
+    try {
+      response = await fetch(api.urlForModel(model), {
+        method: "POST",
+        headers: api.headers(apiKey),
+        body: bodyForProvider(provider, model, systemPrompt, userMessage),
+      });
+    } catch {
+      throw new StoryError("Connexion impossible. Vérifie ta connexion internet.");
+    }
+
+    if (response.status === 429) {
+      throw new StoryError(
+        "Limite d'utilisation atteinte. Attends un instant avant de réessayer."
+      );
+    }
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new StoryError(`Réponse illisible du service (code ${response.status}).`);
+    }
+
+    if (response.ok) break;
+    if (api.modelUnavailable(response.status, data)) continue;
+    if (api.invalidKeyStatuses.includes(response.status)) {
+      throw new StoryError("Clé API invalide ou refusée. Vérifie ta clé dans les réglages.");
+    }
+
     const extractResult = api.extract(data);
     throw new StoryError(
       extractResult.errorMessage
         ? `Erreur du fournisseur : ${extractResult.errorMessage}`
         : `Erreur de l'API (code ${response.status}). Réessaie dans un instant.`
+    );
+  }
+
+  if (!response || !response.ok) {
+    throw new StoryError(
+      "Aucun modèle disponible pour ce fournisseur. Mets l'app à jour ou choisis un autre fournisseur."
     );
   }
 

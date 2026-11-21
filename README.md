@@ -29,8 +29,8 @@ L'app supporte plusieurs fournisseurs — sélectionne le tien dans l'app (par d
 
 | Fournisseur | Clé | Modèle | Gratuit ? |
 |---|---|---|---|
-| **Google Gemini** (recommandé, par défaut) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `gemini-2.0-flash` | ✅ Sans carte bancaire |
-| **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | `llama-3.3-70b-versatile` | ✅ Sans carte bancaire |
+| **Google Gemini** (recommandé, par défaut) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `gemini-3.5-flash-lite`, repli `gemini-3.8-flash` | ✅ Sans carte bancaire |
+| **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | `openai/gpt-oss-120b`, repli `openai/gpt-oss-20b` | ✅ Sans carte bancaire |
 | **Mistral** | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) | `mistral-small-latest` | ❌ Facturation requise depuis nov. 2026 |
 
 1. Crée une clé gratuite sur Google AI Studio (compte Google suffit, aucune carte).
@@ -48,7 +48,7 @@ L'app supporte plusieurs fournisseurs — sélectionne le tien dans l'app (par d
 ```
 App.tsx                  → Interface principale (choix langue, genre, thème, lecture)
 src/lib/config.ts        → Langues, genres, limites de longueur
-src/lib/generate.ts      → Appels API multi-fournisseurs (Gemini / Groq / Mistral), prompt, parsing, garde-fous
+src/lib/generate.ts      → Appels API multi-fournisseurs (Gemini / Groq / Mistral) avec repli automatique de modèle, prompt, parsing, garde-fous
 src/lib/speech.ts        → Découpage du texte en morceaux + contrôleur de lecture vocabulaire
 src/lib/storage.ts       → Stockage sécurisé de la clé API
 ```
